@@ -1,22 +1,33 @@
-"""Prospect and contact models."""
+"""Prospect / owner models — mapped to Inmovilla API fields."""
 
 from pydantic import BaseModel
 
 
-class Contact(BaseModel):
-    """Client contact information."""
+class Owner(BaseModel):
+    """Property owner from Inmovilla ``/propietarios/``."""
 
-    name: str
-    email: str | None = None
-    phone: str | None = None
+    cod_cli: int
+    nombre: str = ""
+    apellidos: str = ""
+    email: str = ""
+    telefono1: str = ""
+    telefono2: str = ""
+
+    @property
+    def full_name(self) -> str:
+        return f"{self.nombre} {self.apellidos}".strip()
+
+    @property
+    def phone(self) -> str:
+        return self.telefono1 or self.telefono2
 
 
 class Prospect(BaseModel):
-    """A prospect from Inmovilla linking a client to a property."""
+    """A prospect linking an Inmovilla property to its owner + Idealista URL."""
 
-    prospect_id: str
-    client: Contact
-    property_id: str
+    cod_ofer: int
+    ref: str
+    owner: Owner
     idealista_url: str
-    inmovilla_status: str = "prospecto"
+    prospecto: bool = True
     clientify_contact_id: int | None = None

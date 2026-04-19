@@ -1,5 +1,22 @@
-"""Idealista property statistics scraper using Playwright."""
+"""Idealista property statistics scraper using Playwright.
 
+Stats are inside a lazy-loaded section:
+  <div id="stats">
+    <div id="stats-ondemand">
+      <p>Anuncio actualizado el ...</p>
+      <ul>
+        <li><strong>303</strong><span>visitas</span></li>
+        <li><strong>15</strong><span>contactos por email</span></li>
+        <li><strong>32</strong><span>veces guardado como favorito</span></li>
+      </ul>
+    </div>
+  </div>
+
+The section only renders once scrolled into the viewport.
+"""
+
+import asyncio
+import contextlib
 import random
 import re
 from datetime import UTC, datetime
@@ -21,6 +38,7 @@ class IdealistaConnector:
         self._playwright = None
         self._browser = None
         self._context = None
+        self._logged_in = False
 
     async def __aenter__(self):
         self._playwright = await async_playwright().start()
@@ -48,41 +66,67 @@ class IdealistaConnector:
 
     async def _random_delay(self):
         """Wait a random time to mimic human behavior."""
-        import asyncio
-
         delay = random.uniform(self._delay_min, self._delay_max)  # noqa: S311
         await asyncio.sleep(delay)
 
     async def login(self) -> bool:
-        """Authenticate on Idealista."""
+        """Authenticate on Idealista (2-step flow: email → password)."""
         page = await self._context.new_page()
         try:
-            await page.goto("https://www.idealista.com/login", wait_until="networkidle")
+            await page.goto(
+                "https://www.idealista.com/login",
+                wait_until="domcontentloaded",
+            )
             await self._random_delay()
 
-            # Fill login form — selectors may need updating
-            await page.fill('input[name="email"]', self._email)
-            await page.fill('input[name="password"]', self._password)
-            await self._random_delay()
-            await page.click('button[type="submit"]')
-            await page.wait_for_load_state("networkidle")
+            # Accept cookies if present
+            try:
+                accept = page.locator("#didomi-notice-agree-button")
+                if await accept.is_visible(timeout=5000):
+                    await accept.click()
+                    await self._random_delay()
+            except Exception:  # noqa: S110
+                pass
 
-            # Check if login succeeded
-            is_logged = await page.query_selector('[class*="user-menu"]') is not None
-            return is_logged
+            # Step 1: Fill email and click Continuar
+            email_sel = (
+                'input[name="email"], input[type="email"], '
+                '#email, input[id*="email"]'
+            )
+            await page.wait_for_selector(email_sel, timeout=10000)
+            await page.fill(email_sel, self._email)
+            await self._random_delay()
+            await page.click('button:has-text("Continuar")')
+
+            # Step 2: Wait for password field to appear
+            await page.wait_for_selector(
+                'input[type="password"]', timeout=10000,
+            )
+            await self._random_delay()
+            await page.fill('input[type="password"]', self._password)
+            await self._random_delay()
+
+            # Click "Iniciar sesión"
+            await page.click('button:has-text("Iniciar sesión")')
+            await page.wait_for_load_state("domcontentloaded")
+            await self._random_delay()
+
+            # Check if login succeeded (redirected away from /login)
+            self._logged_in = "/login" not in page.url
+            return self._logged_in
         finally:
             await page.close()
 
     async def scrape_property_stats(self, url: str) -> dict:
-        """Scrape statistics for a single property listing.
+        """Scrape the "Estadísticas" card for a single property listing.
 
-        Args:
-            url: Idealista property URL (e.g. https://www.idealista.com/inmueble/111029821/)
+        The stats section is lazy-loaded: we must scroll ``div#stats``
+        into the viewport and wait for ``div#stats-ondemand`` children.
 
         Returns:
-            Dictionary with property_id, timestamp, and metrics.
+            Dictionary with property_id, url, timestamp, metrics and
+            last_updated text.
         """
-        # Extract property ID from URL
         match = re.search(r"/inmueble/(\d+)", url)
         property_id = match.group(1) if match else "unknown"
 
@@ -91,14 +135,19 @@ class IdealistaConnector:
             await page.goto(url, wait_until="networkidle")
             await self._random_delay()
 
-            metrics = {
-                "visits": await self._extract_number(page, "visitas"),
-                "email_contacts": await self._extract_number(page, "contactos por email"),
-                "favorites": await self._extract_number(page, "guardado como favorito"),
-                "phone_contacts": await self._extract_number(page, "contactos telefónicos"),
-            }
+            # Scroll stats section into view to trigger lazy load
+            stats_div = await page.query_selector("div#stats")
+            if stats_div:
+                await stats_div.scroll_into_view_if_needed()
+                await asyncio.sleep(3)
 
-            # Try to get last updated date
+            # Wait for the on-demand content to appear
+            with contextlib.suppress(Exception):
+                await page.wait_for_selector(
+                    "div#stats-ondemand li", timeout=10000,
+                )
+
+            metrics = await self._parse_stats_ondemand(page)
             last_updated = await self._extract_date(page)
 
             return {
@@ -111,47 +160,56 @@ class IdealistaConnector:
         finally:
             await page.close()
 
-    async def _extract_number(self, page, label: str) -> int | None:
-        """Extract a numeric metric by its associated label text.
+    async def _parse_stats_ondemand(self, page) -> dict:
+        """Parse ``div#stats-ondemand ul li`` items.
 
-        This uses the statistics panel structure visible in the Idealista UI.
-        The pattern is: <strong>NUMBER</strong> followed by label text.
+        Each ``<li>`` contains ``<strong>NUMBER</strong>``
+        and ``<span>label</span>``.
         """
-        try:
-            # Strategy 1: Look for text content near the label
-            locator = page.locator(f"text=/{label}/i").first
-            parent = locator.locator("..")
-            number_el = parent.locator("strong").first
-            text = await number_el.text_content()
-            if text:
-                return int(text.strip().replace(".", "").replace(",", ""))
-        except Exception:  # noqa: S110
-            pass
+        result: dict[str, int | None] = {
+            "visits": None,
+            "email_contacts": None,
+            "favorites": None,
+            "phone_contacts": None,
+        }
 
-        try:
-            # Strategy 2: XPath based approach
-            elements = await page.query_selector_all("strong")
-            for el in elements:
-                sibling_text = await el.evaluate(
-                    "(node) => node.parentElement?.textContent || ''"
-                )
-                if label.lower() in sibling_text.lower():
-                    text = await el.text_content()
-                    if text:
-                        clean = re.sub(r"[^\d]", "", text.strip())
-                        return int(clean) if clean else None
-        except Exception:  # noqa: S110
-            pass
+        label_map = {
+            "visitas": "visits",
+            "contactos por email": "email_contacts",
+            "guardado como favorito": "favorites",
+            "contactos telefónicos": "phone_contacts",
+        }
 
-        return None
+        stats_od = await page.query_selector("div#stats-ondemand")
+        if not stats_od:
+            return result
+
+        items = await stats_od.query_selector_all("li")
+        for item in items:
+            strong = await item.query_selector("strong")
+            if not strong:
+                continue
+            num_text = (await strong.text_content() or "").strip()
+            label_text = (await item.text_content() or "").strip()
+            # label_text = "303visitas"  → remove the number prefix
+            label_text = label_text.removeprefix(num_text).strip()
+
+            for pattern, key in label_map.items():
+                if pattern in label_text.lower():
+                    clean = re.sub(r"[^\d]", "", num_text)
+                    result[key] = int(clean) if clean else None
+                    break
+
+        return result
 
     async def _extract_date(self, page) -> str | None:
-        """Extract the 'last updated' date from the statistics panel."""
-        try:
-            locator = page.locator("text=/actualizado/i").first
-            text = await locator.text_content()
+        """Extract the 'Anuncio actualizado el ...' text."""
+        stats_od = await page.query_selector("div#stats-ondemand")
+        if not stats_od:
+            return None
+        p_el = await stats_od.query_selector("p")
+        if p_el:
+            text = await p_el.text_content()
             if text:
                 return text.strip()
-        except Exception:  # noqa: S110
-            pass
         return None

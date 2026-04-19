@@ -5,32 +5,41 @@ import pytest
 
 @pytest.fixture
 def sample_metrics():
-    """Sample property metrics for testing."""
+    """Sample property metrics matching real Idealista stats card."""
     return {
-        "property_id": "111029821",
-        "url": "https://www.idealista.com/inmueble/111029821/",
+        "property_id": "28751504",
+        "url": "https://www.idealista.com/inmueble/111051259/",
         "timestamp": "2026-04-19T14:00:00Z",
         "metrics": {
-            "visits": 1619,
-            "email_contacts": 11,
-            "favorites": 88,
+            "visits": 303,
+            "email_contacts": 15,
+            "favorites": 32,
             "phone_contacts": None,
         },
-        "last_updated": "Anuncio actualizado el 18 de diciembre",
+        "last_updated": "Anuncio actualizado el 9 de abril",
     }
 
 
 @pytest.fixture
-def sample_prospect():
-    """Sample prospect data for testing."""
+def sample_owner():
+    """Sample owner data matching real Inmovilla propietarios response."""
     return {
-        "prospect_id": "INM-12345",
-        "client": {
-            "name": "Test User",
-            "email": "test@example.com",
-            "phone": "+34600000000",
-        },
-        "property_id": "111029821",
-        "idealista_url": "https://www.idealista.com/inmueble/111029821/",
-        "inmovilla_status": "prospecto",
+        "cod_cli": 37343138,
+        "nombre": "MANUEL",
+        "apellidos": "RAMIREZ",
+        "email": "test@example.com",
+        "telefono1": "",
+        "telefono2": "661949813",
+    }
+
+
+@pytest.fixture
+def sample_prospect(sample_owner):
+    """Sample prospect matching real Inmovilla data."""
+    return {
+        "cod_ofer": 28751504,
+        "ref": "PR12708",
+        "owner": sample_owner,
+        "idealista_url": "https://www.idealista.com/inmueble/111051259/",
+        "prospecto": True,
     }

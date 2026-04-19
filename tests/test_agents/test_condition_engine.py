@@ -14,7 +14,7 @@ rules:
     conditions:
       - metric: visits
         operator: ">="
-        value: 1000
+        value: 200
       - metric: email_contacts
         operator: ">="
         value: 10
@@ -26,16 +26,16 @@ rules:
 
     engine = ConditionEngineAgent(rules_path=str(rules_yaml))
     snapshot = PropertySnapshot(
-        property_id="111029821",
-        url="https://www.idealista.com/inmueble/111029821/",
+        property_id="28751504",
+        url="https://www.idealista.com/inmueble/111051259/",
         timestamp="2026-04-19T14:00:00Z",
-        metrics=PropertyMetrics(visits=1619, email_contacts=11, favorites=88),
+        metrics=PropertyMetrics(visits=303, email_contacts=15, favorites=32),
     )
 
     triggered = await engine.run([snapshot])
     assert len(triggered) == 1
     assert triggered[0].action == "notify_high_interest"
-    assert triggered[0].property_id == "111029821"
+    assert triggered[0].property_id == "28751504"
 
 
 async def test_low_visits_does_not_trigger_high_interest(tmp_path):
@@ -48,15 +48,15 @@ rules:
     conditions:
       - metric: visits
         operator: ">="
-        value: 1000
+        value: 200
     action: notify_high_interest
     enabled: true
 """)
 
     engine = ConditionEngineAgent(rules_path=str(rules_yaml))
     snapshot = PropertySnapshot(
-        property_id="999",
-        url="https://www.idealista.com/inmueble/999/",
+        property_id="99999",
+        url="https://www.idealista.com/inmueble/99999/",
         timestamp="2026-04-19T14:00:00Z",
         metrics=PropertyMetrics(visits=50, email_contacts=1, favorites=3),
     )

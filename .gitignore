@@ -26,6 +26,8 @@ Thumbs.db
 # Playwright
 playwright-report/
 test-results/
+debug_*.png
+*.png
 
 # Logs
 logs/
