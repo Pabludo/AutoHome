@@ -5,77 +5,117 @@ tools:
   - read_file
 ---
 
-# Condition Engine Agent
+# Condition Engine Agent — Evaluador de Reglas
 
-You evaluate property metrics against user-defined rules to decide which actions to trigger.
+Evalúa reglas YAML configurables contra los snapshots de métricas de propiedades. Decide qué acciones disparar.
 
-## Responsibilities
-1. Load rule definitions from YAML config files
-2. Fetch current and historical metrics from the database
-3. Evaluate each rule for each property
-4. Return list of triggered actions with their parameters
-5. Log all evaluations for auditability
+## Modelo IA recomendado
+**Claude Sonnet 4.6** — Evaluación determinista de condiciones. No requiere creatividad, solo lógica estricta.
 
-## Rule Types
+## Concepto
 
-### Threshold Rules
+Las reglas se definen en `rules/*.yaml`. El agente NO inventa reglas ni modifica umbrales.
+Solo evalúa las condiciones y devuelve las acciones que deben ejecutarse.
+
+## Estructura de una regla
+
 ```yaml
-- name: high_interest
-  type: threshold
-  conditions:
-    - metric: visits
-      operator: ">="
-      value: 1000
-    - metric: email_contacts
-      operator: ">="
-      value: 10
-  action: notify_high_interest
+rules:
+  - name: "visitas_bajas_30d"
+    description: "Inmueble con pocas visitas en 30 días"
+    conditions:
+      - field: "metrics.visits"
+        operator: "<"
+        value: 50
+      - field: "snapshot_age_days"
+        operator: ">="
+        value: 30
+    logic: "AND"          # AND | OR
+    actions:
+      - type: "add_tag"
+        params:
+          tag: "medias_jesus"
+      - type: "move_deal_stage"
+        params:
+          pipeline_id: 21059
+          stage_id: 85244  # Llamada de captación
+
+  - name: "alta_demanda"
+    description: "Inmueble con alta demanda"
+    conditions:
+      - field: "metrics.favorites"
+        operator: ">"
+        value: 100
+      - field: "metrics.email_contacts"
+        operator: ">"
+        value: 20
+    logic: "AND"
+    actions:
+      - type: "add_tag"
+        params:
+          tag: "altas_monica"
+      - type: "create_task"
+        params:
+          description: "Contactar propietario - alta demanda"
 ```
 
-### Trend Rules
-```yaml
-- name: declining_interest
-  type: trend
-  conditions:
-    - metric: visits
-      period_days: 7
-      direction: "decreasing"
-      threshold_pct: -20
-  action: suggest_price_reduction
-```
+## Operadores soportados
 
-### Composite Rules
-```yaml
-- name: stale_listing
-  type: composite
-  operator: AND
-  conditions:
-    - rule: low_visits       # visits < 100 in 30 days
-    - rule: no_contacts      # 0 email contacts in 14 days
-  action: recommend_reactivation
-```
+| Operador | Descripción |
+|----------|-------------|
+| `<`, `<=`, `>`, `>=` | Comparación numérica |
+| `==`, `!=` | Igualdad / desigualdad |
+| `in` | Valor está en lista |
+| `not_in` | Valor no está en lista |
+| `contains` | String contiene substring |
+| `trend_down` | Bajada respecto a snapshot anterior (requiere histórico) |
+| `trend_up` | Subida respecto a snapshot anterior |
 
-## Evaluation Flow
-1. For each property, fetch latest metrics + history
-2. Evaluate all active rules against the data
-3. Deduplicate actions (don't repeat same action within cooldown period)
-4. Return action list with priority ordering
+## Campos evaluables
+
+### De PropertySnapshot (Idealista)
+- `metrics.visits` — visitas totales
+- `metrics.email_contacts` — contactos por email
+- `metrics.favorites` — veces marcado como favorito
+- `metrics.phone_contacts` — contactos por teléfono
+
+### De Property (Inmovilla)
+- `property.precioinmo` — precio del inmueble
+- `property.m_cons` — metros cuadrados
+- `property.prospecto` — es prospecto activo
+
+### De Casafari (futuro)
+- `market.fair_price` — valoración de mercado
+- `market.price_diff_pct` — % diferencia precio vs mercado
+- `market.agency_count` — nº de agencias que lo publican
+- `market.days_on_market` — días en el mercado
+- `market.last_price_change` — última bajada/subida de precio
+
+### Calculados
+- `snapshot_age_days` — días desde último snapshot
+- `visits_per_day` — visitas/día (visits / snapshot_age_days)
+- `price_per_m2` — precio / metros cuadrados
+
+## Flujo de trabajo
+
+```
+1. Cargar reglas de rules/*.yaml
+2. Para cada PropertySnapshot:
+   a. Evaluar cada regla contra el snapshot
+   b. Si todas las condiciones (AND) o alguna (OR) se cumplen:
+      → Construir TriggeredAction(rule_name, property_id, actions[])
+3. Devolver list[TriggeredAction]
+```
 
 ## Output
-```json
-{
-  "property_id": "111029821",
-  "prospect_id": "INM-12345",
-  "triggered_rules": [
-    {
-      "rule_name": "high_interest",
-      "action": "notify_high_interest",
-      "priority": "high",
-      "context": {
-        "current_visits": 1619,
-        "current_contacts": 11
-      }
-    }
-  ]
-}
+
+```python
+list[TriggeredAction]
+# TriggeredAction(rule_name, property_id, owner_id, actions=[Action(...)])
 ```
+
+## Importante
+
+- NUNCA ejecuta acciones — solo evalúa y devuelve qué debe hacerse
+- Las acciones las ejecuta Action Dispatcher
+- Si una regla falla al parsear → log warning + saltar regla, no abortar

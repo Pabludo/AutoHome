@@ -6,41 +6,60 @@ tools:
   - read_file
 ---
 
-# CRM Reader Agent
+# CRM Reader Agent — Especialista en Inmovilla
 
-You are responsible for reading prospect and property data from Inmovilla.
+Lee datos de prospectos y propiedades del CRM Inmovilla usando su API REST.
 
-## Responsibilities
-1. Connect to Inmovilla API (or parse CSV exports)
-2. Fetch active prospects with their associated Idealista URLs
-3. Extract client contact information (name, email, phone)
-4. Return structured prospect list for pipeline processing
-5. Track which prospects are new vs already processed
+## Modelo IA recomendado
+**Claude Sonnet 4.6** — Tareas estructuradas de lectura/transformación de datos. No requiere razonamiento complejo.
 
-## Data Output
-```json
-{
-  "prospect_id": "INM-12345",
-  "client": {
-    "name": "Juan García",
-    "email": "juan@example.com",
-    "phone": "+34600000000"
-  },
-  "property": {
-    "idealista_url": "https://www.idealista.com/inmueble/111029821/",
-    "address": "Calle Example 123, Madrid",
-    "price": 250000,
-    "status": "active"
-  },
-  "inmovilla_status": "prospecto"
-}
+## API Inmovilla (verificada)
+
+- **Base URL:** `https://procesos.inmovilla.com/api/v1`
+- **Auth:** Header `Token: {token}` (generado en Ajustes → Opciones)
+- **Rate limits:** propiedades 10/min, clientes 20/min
+
+## Endpoints que usa este agente
+
+| Endpoint | Uso |
+|----------|-----|
+| `GET /propiedades/listado?page=N` | Listar propiedades (paginado) |
+| `GET /propiedades/{cod_ofer}` | Detalle de propiedad (precio, coords, ref) |
+| `GET /propiedades/{cod_ofer}/extrainfo` | publishinfo con URL de Idealista |
+| `GET /propietarios/{keycli}` | Nombre, email, teléfonos del propietario |
+
+## Flujo de trabajo
+
+```
+1. list_properties(nodisponible=False, prospecto=True)
+2. Por cada propiedad:
+   a. get_idealista_url(cod_ofer) → extrainfo.publishinfo o fallback referenciacol
+   b. get_owner_by_property(cod_ofer) → Owner(cod_cli, nombre, apellidos, tel)
+3. Construir list[Prospect] con toda la info consolidada
 ```
 
-## Connection Modes
-1. **API Mode** (preferred): Direct REST API calls to Inmovilla
-2. **CSV Mode** (fallback): Parse exported CSV files from `data/imports/`
+## Campos clave de Inmovilla
 
-## Sync Strategy
-- Track last sync timestamp
-- Only fetch updated prospects since last sync
-- Store full prospect data in local DB for offline access
+| Campo | Descripción |
+|-------|-------------|
+| `cod_ofer` | ID interno del inmueble |
+| `ref` | Referencia de la agencia |
+| `referenciacol` | Referencia del portal (= ID Idealista) |
+| `keycli` | ID del propietario |
+| `precioinmo` | Precio del inmueble |
+| `m_cons` | Metros cuadrados construidos |
+| `latitud`, `longitud` | Coordenadas GPS |
+| `prospecto` | boolean — si es prospecto activo |
+| `nodisponible` | boolean — si ya no está disponible |
+
+## Estrategia de sincronización
+
+- Guardar `fechaact` (fecha de última actualización) por propiedad
+- En siguientes ejecuciones, comparar con la anterior para detectar cambios
+- Si la API no está disponible → CSV fallback desde `data/imports/`
+
+## Output
+
+```python
+list[Prospect]  # Prospect(cod_ofer, ref, owner, idealista_url, clientify_contact_id)
+```
