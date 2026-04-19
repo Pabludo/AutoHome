@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     inmovilla_user: str = ""
     inmovilla_password: str = ""
 
+    # Casafari
+    casafari_email: str = ""
+    casafari_password: str = ""
+    casafari_base_url: str = "https://api.casafari.com"
+
     # Database
     database_url: str = "sqlite:///data/autohome.db"
 
