@@ -1,0 +1,70 @@
+# Example Rule Definitions for AutoHome Condition Engine
+# These rules define when to trigger actions based on Idealista property metrics.
+
+rules:
+  # High Interest — property getting lots of attention
+  - name: high_interest
+    type: threshold
+    description: "Trigger when a property has high visit count and email contacts"
+    conditions:
+      - metric: visits
+        operator: ">="
+        value: 1000
+      - metric: email_contacts
+        operator: ">="
+        value: 10
+    operator: AND
+    action: notify_high_interest
+    priority: high
+    cooldown_hours: 48
+    enabled: true
+
+  # Very Popular — lots of favorites
+  - name: very_popular
+    type: threshold
+    description: "Trigger when a property has been saved as favorite many times"
+    conditions:
+      - metric: favorites
+        operator: ">="
+        value: 50
+    action: notify_high_interest
+    priority: medium
+    cooldown_hours: 72
+    enabled: true
+
+  # Low Interest — might need price reduction
+  - name: low_interest
+    type: threshold
+    description: "Trigger when visits are too low after listing"
+    conditions:
+      - metric: visits
+        operator: "<"
+        value: 100
+      - metric: email_contacts
+        operator: "<="
+        value: 2
+    operator: AND
+    action: suggest_price_reduction
+    priority: medium
+    cooldown_hours: 168  # 7 days
+    enabled: true
+
+  # Dead Listing — no activity at all
+  - name: dead_listing
+    type: threshold
+    description: "No engagement whatsoever"
+    conditions:
+      - metric: visits
+        operator: "<"
+        value: 20
+      - metric: email_contacts
+        operator: "=="
+        value: 0
+      - metric: favorites
+        operator: "<"
+        value: 5
+    operator: AND
+    action: recommend_reactivation
+    priority: high
+    cooldown_hours: 336  # 14 days
+    enabled: true
